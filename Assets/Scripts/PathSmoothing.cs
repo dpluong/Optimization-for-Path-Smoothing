@@ -1,26 +1,26 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEditor;
 
-/*
-        { { 65.f,44.f },31.f },{ { 79.f,43.f },29.4279f },{ { 93.f,42.f },28.0713f },{ { 110.f,40.f },27.f },
-        { { 124.f,39.f },25.4951f },{ { 138.f,38.f },24.1868f },{ { 152.f,37.f },22.8035f },{ { 167.f,37.f },23.7697f },
-        { { 188.f,46.f },31.9061f },{ { 184.f,66.f },24.1868f },{ { 177.f,84.f },22.0227f },{ { 165.f,96.f },26.4764f },
-        { { 147.f,109.f },36.1248f },{ { 125.f,134.f },56.8859f },{ { 101.f,170.f },88.f },{ { 110.f,189.f },97.f },
-        { { 119.f,208.f },106.f },{ { 131.f,229.f },117.618f },{ { 172.f,211.f },85.3815f },{ { 198.f,194.f },66.7308f },
-        { { 214.f,179.f },56.8595f },{ { 228.f,161.f },50.2494f },{ { 237.f,149.f },50.9117f },{ { 249.f,136.f },54.5619f },
-        { { 264.f,124.f },61.6604f },{ { 285.f,112.f },73.6817f },{ { 312.f,103.f },89.8109f },{ { 328.f,107.f },92.6607f },
-        { { 345.f,112.f },98.0816f },{ { 363.f,118.f },105.f },{ { 368.f,136.f },99.6444f },{ { 341.f,182.f },58.3095f },
-        { { 316.f,205.f },36.3456f },{ { 301.f,221.f },28.1603f },{ { 295.f,234.f },26.9258f },{ { 291.f,253.f },29.7321f },
-        { { 290.f,272.f },35.1141f },{ { 297.f,298.f },50.f },{ { 326.f,284.f },30.1496f },{ { 349.f,268.f },15.f },
-        { { 382.f,279.f },25.0799f },{ { 408.f,301.f },47.f },{ { 421.f,300.f },47.f }
-*/
-//[ExecuteInEditMode]
+
 public class PathSmoothing : MonoBehaviour
 {
-    public GameObject node;
-    List<GameObject> nodeList = new List<GameObject>();
+    //public GameObject node;
+    //List<GameObject> nodeList = new List<GameObject>();
+    Vector3[] circleCenter;
+    float[] radius;
+    float[] weight;
+    /* Step sizes */
+    float[] sigma;
+    float[] tau;
+    float mu;
+    /* Scale factor h */
+    float h;
+    /* updates nodes with smoother path */
+    Vector3[] v;
+    Vector3[] vhat;
+    /* Dual variables */
+    Vector3[] p;
+    Vector3[] q;
+
     CorridorMapNode[] map = new CorridorMapNode[] {
     new CorridorMapNode( new Vector3 (65f, 0f, 44f), 31f ), new CorridorMapNode( new Vector3 (79f, 0f, 43f), 29.4279f ), new CorridorMapNode( new Vector3 (93f, 0f, 42f), 28.0713f ), new CorridorMapNode( new Vector3 (110f, 0f, 40f), 27f ),
     new CorridorMapNode( new Vector3 (124f, 0f, 39f), 25.4951f ), new CorridorMapNode( new Vector3 (138f, 0f, 38f), 24.1868f ), new CorridorMapNode( new Vector3 (152f, 0f, 37f), 22.8035f ), new CorridorMapNode( new Vector3 (167f, 0f, 37f), 23.7697f),
@@ -34,30 +34,214 @@ public class PathSmoothing : MonoBehaviour
     new CorridorMapNode( new Vector3 (290f, 0f, 272f), 35.1141f ), new CorridorMapNode( new Vector3 (297f, 0f, 298f), 50f ), new CorridorMapNode( new Vector3 (326f, 0f, 284f), 30.1496f ), new CorridorMapNode( new Vector3 (349f, 0f, 268f), 15f ),
     new CorridorMapNode( new Vector3 (382f, 0f, 279f), 25.0799f ), new CorridorMapNode( new Vector3 (408f, 0f, 301f), 47f ), new CorridorMapNode( new Vector3 (421f, 0f, 300f), 47f ) 
     };
-    // Start is called before the first frame update
-    void Awake()
-    {
-        InitCorridorMap();
-        Debug.Log("Editor causes this Awake");
-    }
-/*
-    private void OnDrawGizmos() 
-    {
-        if (nodeList.Count == map.Length)
-        {
-            for (int i = 0; i < nodeList.Count; ++i)
-            {
-                Handles.DrawWireDisc(nodeList[i].transform.position, new Vector3(0f, 1f, 0f), map[i].radius);
-            }
-        }
-    }*/
 
-    void InitCorridorMap()
+    Vector3 startPosition = new Vector3(58f, 0f, 67f);
+    Vector3 goalPosition = new Vector3(420f, 0f, 280f);
+    const float Epsilon = 1.192092896e-07F;
+
+    [SerializeField]
+    Vector3 startFacingDirection = new Vector3(-0.316228f, 0f, -0.948683f);
+    [SerializeField]
+    Vector3 goalFacingDirection = new Vector3(0.707107f, 0f, -0.707107f);
+    [SerializeField]
+    float startSmoothingWeight = 10;
+    [SerializeField]
+    float goalSmoothingWeight = 10;
+    [SerializeField]
+    float smoothingWeight = 2;
+    [SerializeField]
+    float stepSizeAlpha = 0.0625f;
+    [SerializeField]
+    float stepSizeBeta = 10;
+    [SerializeField]
+    int numOfIterations = 100;
+
+    // Start is called before the first frame update
+    void Start()
+    {
+        InitConstraint();
+        InitWeight();
+        InitStepsize();
+        CreateSmoothPath();
+    }
+
+   /* void InitCorridorMap()
     {
         for (int i = 0; i < map.Length; ++i)
         {
             nodeList.Add(Object.Instantiate(node, map[i].circleCenter, Quaternion.identity));
             nodeList[i].GetComponent<Node>().SetNodeRadius(map[i].radius);
+        }
+    }*/
+
+    void InitConstraint()
+    {
+        int numOfNewMapNodes = map.Length + 4;
+        circleCenter = new Vector3[numOfNewMapNodes];
+        radius = new float[numOfNewMapNodes];
+        
+        float pathLength = 0;
+        for (int i = 1; i < map.Length; ++i)
+        {
+            pathLength += Vector3.Distance(map[i].circleCenter, map[i - 1].circleCenter);
+        }
+        h = pathLength / (map.Length - 1);
+
+        circleCenter[0] = startPosition - startFacingDirection * h;
+        radius[0] = 0;
+        circleCenter[1] = startPosition;
+        radius[1] = 0;
+
+        circleCenter[numOfNewMapNodes - 1] = goalPosition + goalFacingDirection * h;
+        radius[numOfNewMapNodes - 1] = 0;
+        circleCenter[numOfNewMapNodes - 2] = goalPosition;
+        radius[numOfNewMapNodes - 2] = 0;
+
+        for (int i = 0; i < numOfNewMapNodes - 4; ++i)
+        {
+            circleCenter[i + 2] = map[i].circleCenter;
+            radius[i + 2] = map[i].radius;
+        }
+    }
+
+    void InitWeight()
+    {
+        float ws = startSmoothingWeight;
+        float we = goalSmoothingWeight;
+        float wm = smoothingWeight;
+        weight = new float[map.Length + 4];
+        bool hasStartFacingDirection = true;
+        bool hasGoalFacingDirection = true;
+        if (startFacingDirection.x == 0 && startFacingDirection.z == 0)
+        {
+            hasStartFacingDirection = false;
+        }
+
+        if (goalFacingDirection.x == 0 && goalFacingDirection.z == 0)
+        {
+            hasGoalFacingDirection = false;
+        }
+        weight[0] = 0;
+        weight[weight.Length - 1] = 0;
+
+        if (!hasStartFacingDirection)
+        {
+            ws = smoothingWeight;
+        }
+        if (!hasGoalFacingDirection)
+        {
+            we = smoothingWeight;
+        }
+        float bound = (float)(weight.Length - 2) / (2f * (float)(weight.Length - 3));
+        for (int i = 1; i < weight.Length - 1; ++i)
+        {
+            float weightCurve = Mathf.Pow(2f * (float)(i - 1) / (float)(weight.Length - 3) - 1, 4); 
+            
+            if ((float)(i - 1) / (float)(weight.Length - 3) <= bound)
+            {
+                weight[i] = wm + (ws - wm) * weightCurve;
+            } 
+            else
+            {
+                weight[i] = wm + (we - wm) * weightCurve;
+            }
+        }
+
+        if (!hasStartFacingDirection)
+        {
+            weight[1] = 0;
+        }
+        if (!hasGoalFacingDirection)
+        {
+            weight[weight.Length - 2] = 0;
+        }
+    }
+
+    void InitStepsize()
+    {
+        sigma = new float[map.Length + 4];
+        tau = new float[map.Length + 4];
+        sigma[0] = 0;
+        tau[0] = 0;
+        sigma[sigma.Length - 1] = 0;
+        tau[tau.Length - 1] = 0;
+        float hPowAlpha = Mathf.Pow(h, stepSizeAlpha);
+        float twoPowAlpha = Mathf.Pow(2f, stepSizeAlpha);
+
+        float preWeightPowTwoMinusAlpha = 0;
+        float currentWeightPowTwoMinusAlpha = Mathf.Pow(weight[1], 2f - stepSizeAlpha);
+        for (int i = 1; i < sigma.Length - 1; ++i)
+        {
+            if (weight[i] != 0)
+            {
+                sigma[i] = hPowAlpha / ((2f + twoPowAlpha) * stepSizeBeta * Mathf.Pow(weight[i], stepSizeAlpha));
+            }
+            else
+            {
+                sigma[i] = 0;
+            }
+            float nextWeightPowTwoMinusAlpha = Mathf.Pow(weight[i + 1], 2f - stepSizeAlpha);
+            
+            tau[i] = (stepSizeBeta * h * h / hPowAlpha) / (2f + preWeightPowTwoMinusAlpha + (Mathf.Pow(2f, 2) / twoPowAlpha) * currentWeightPowTwoMinusAlpha + nextWeightPowTwoMinusAlpha);
+            preWeightPowTwoMinusAlpha = currentWeightPowTwoMinusAlpha;
+            currentWeightPowTwoMinusAlpha = nextWeightPowTwoMinusAlpha;
+        }
+        mu = hPowAlpha / (2f * stepSizeBeta);
+    }
+
+    void CreateSmoothPath()
+    {
+        int pathLength = circleCenter.Length;
+        v = new Vector3[pathLength];
+        vhat = new Vector3[pathLength];
+        p = new Vector3[pathLength];
+        q = new Vector3[pathLength];
+
+        for (int i = 0; i < pathLength; ++i)
+        {
+            v[i] = circleCenter[i];
+            vhat[i] = circleCenter[i];
+            p[i] = new Vector3(0f, 0f, 0f);
+            q[i] = new Vector3(0f, 0f, 0f);
+        }
+
+        for (int index = 1; index <= numOfIterations; ++ index)
+        {
+            q[0] = mu * ((vhat[1] - vhat[0]) / h);
+            float qL2Norm = q[0].sqrMagnitude;
+            for (int i = 1; i < pathLength - 1; ++i)
+            {
+                Vector3 forwardDifference = (vhat[i + 1] - vhat[i]) / h;
+                Vector3 backwardDifference = (vhat[i] - vhat[i - 1]) / h;
+
+                p[i] = (p[i] + sigma[i] * weight[i] * (-forwardDifference + backwardDifference)) / (1f + sigma[i]);
+                q[i] = q[i] + mu * forwardDifference;
+                qL2Norm += q[i].sqrMagnitude;
+            }
+
+            if (qL2Norm > 1f)
+            {
+                for (int i = 0; i < pathLength - 1; ++i)
+                {
+                    q[i] = q[i] / qL2Norm;
+                }
+            }
+
+            for (int i = 1; i < pathLength - 1; ++i)
+            {
+                Vector3 qBackwardDifferencing = (q[i] - q[i - 1]) / h;
+                Vector3 pSumDifferencing = (2 * weight[i] * p[i] - weight[i - 1] * p[i - 1] - weight[i + 1] * p[i + 1]) / h;
+
+                Vector3 nextv = v[i] - tau[i] * (pSumDifferencing - qBackwardDifferencing);
+                Vector3 vMinusCenter = nextv - circleCenter[i];
+                nextv = circleCenter[i] + vMinusCenter * radius[i] / Mathf.Max(radius[i] + Epsilon, vMinusCenter.magnitude);
+                vhat[i] = 2 * nextv - v[i];
+                v[i] = nextv;
+            }
+        }
+        for (int i = 0; i < pathLength; ++i)
+        {
+            Debug.Log(v[i]);
         }
     }
 }
