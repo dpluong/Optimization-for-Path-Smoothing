@@ -1,5 +1,5 @@
 using UnityEngine;
-
+using UnityEngine.AI;
 
 public class PathSmoothing : MonoBehaviour
 {
@@ -15,7 +15,8 @@ public class PathSmoothing : MonoBehaviour
     /* Scale factor h */
     float h;
     /* updates nodes with smoother path */
-    Vector3[] v;
+    [HideInInspector]
+    public Vector3[] v;
     Vector3[] vhat;
     /* Dual variables */
     Vector3[] p;
@@ -35,10 +36,13 @@ public class PathSmoothing : MonoBehaviour
     new CorridorMapNode( new Vector3 (382f, 0f, 279f), 25.0799f ), new CorridorMapNode( new Vector3 (408f, 0f, 301f), 47f ), new CorridorMapNode( new Vector3 (421f, 0f, 300f), 47f ) 
     };
 
-    Vector3 startPosition = new Vector3(58f, 0f, 67f);
-    Vector3 goalPosition = new Vector3(420f, 0f, 280f);
+    
     const float Epsilon = 1.192092896e-07F;
-
+    [Header("Path Smoothing Configuration")]
+    [SerializeField]
+    Vector3 startPosition = new Vector3(58f, 18.7f, 67f);
+    [SerializeField]
+    Vector3 goalPosition = new Vector3(420f, 18.7f, 280f);
     [SerializeField]
     Vector3 startFacingDirection = new Vector3(-0.316228f, 0f, -0.948683f);
     [SerializeField]
@@ -56,13 +60,30 @@ public class PathSmoothing : MonoBehaviour
     [SerializeField]
     int numOfIterations = 100;
 
+    NavMeshAgent agent;
+    int nodeIndex = 2;
+    float lerpTime = 0;
+    Vector3 movementVector;
+    Vector3 targetDirection;
+
+    [Header("Movement Configuration")]
+    [SerializeField]
+    [Range(0, 0.99f)]
+    private float smoothing = 0.25f;
+    [SerializeField]
+    private float targetLerpSpeed = 1;
+
+
     // Start is called before the first frame update
-    void Start()
+    void Awake()
     {
+        agent = GetComponent<NavMeshAgent>();
+        InitAgentPosition();
         InitConstraint();
         InitWeight();
         InitStepsize();
         CreateSmoothPath();
+        //MoveAgent();
     }
 
    /* void InitCorridorMap()
@@ -73,6 +94,10 @@ public class PathSmoothing : MonoBehaviour
             nodeList[i].GetComponent<Node>().SetNodeRadius(map[i].radius);
         }
     }*/
+
+    private void Update() {
+        MoveAgent();
+    }
 
     void InitConstraint()
     {
@@ -93,6 +118,7 @@ public class PathSmoothing : MonoBehaviour
         radius[1] = 0;
 
         circleCenter[numOfNewMapNodes - 1] = goalPosition + goalFacingDirection * h;
+
         radius[numOfNewMapNodes - 1] = 0;
         circleCenter[numOfNewMapNodes - 2] = goalPosition;
         radius[numOfNewMapNodes - 2] = 0;
@@ -100,6 +126,7 @@ public class PathSmoothing : MonoBehaviour
         for (int i = 0; i < numOfNewMapNodes - 4; ++i)
         {
             circleCenter[i + 2] = map[i].circleCenter;
+            circleCenter[i + 2].y = 18.7f;
             radius[i + 2] = map[i].radius;
         }
     }
@@ -239,10 +266,54 @@ public class PathSmoothing : MonoBehaviour
                 v[i] = nextv;
             }
         }
-        for (int i = 0; i < pathLength; ++i)
+    }
+
+    void InitAgentPosition()
+    {
+        startPosition = new Vector3(startPosition.x, gameObject.transform.position.y, startPosition.z);
+        this.gameObject.transform.position = startPosition;
+        Quaternion endRotation = Quaternion.LookRotation(startFacingDirection, Vector3.up);
+        transform.rotation = endRotation;
+    }
+
+    void MoveAgent()
+    {
+        if (nodeIndex >= v.Length)
         {
-            Debug.Log(v[i]);
+            return;
         }
+        
+        if (Vector3.Distance(transform.position, v[nodeIndex] + (agent.baseOffset * Vector3.up)) <= 20f)
+        {
+            nodeIndex += 1;   
+            lerpTime = 0;
+
+            if (nodeIndex >= v.Length)
+            {
+                return;
+            }
+        }
+
+        movementVector = (v[nodeIndex] - transform.position);
+        Debug.Log(movementVector);
+        targetDirection = Vector3.Lerp(
+            targetDirection,
+            movementVector,
+            Mathf.Clamp01(lerpTime * targetLerpSpeed * (1 - smoothing))
+        );
+
+        Vector3 lookDirection = movementVector;
+        if (lookDirection != Vector3.zero)
+        {
+            transform.rotation = Quaternion.Lerp(
+                transform.rotation,
+                Quaternion.LookRotation(lookDirection),
+                Mathf.Clamp01(lerpTime * targetLerpSpeed * (1 - smoothing))
+            );
+        }
+
+        agent.Move(targetDirection * agent.speed * Time.deltaTime);
+        lerpTime += Time.deltaTime;   
     }
 }
 
