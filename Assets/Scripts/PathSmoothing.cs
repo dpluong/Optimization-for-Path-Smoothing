@@ -1,10 +1,10 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
 
 public class PathSmoothing : MonoBehaviour
 {
-    //public GameObject node;
-    //List<GameObject> nodeList = new List<GameObject>();
+    const float Epsilon = 1.192092896e-07F;
     Vector3[] circleCenter;
     float[] radius;
     float[] weight;
@@ -14,30 +14,17 @@ public class PathSmoothing : MonoBehaviour
     float mu;
     /* Scale factor h */
     float h;
-    /* updates nodes with smoother path */
-    [HideInInspector]
-    public Vector3[] v;
+    /* updated nodes with smoother path */
+    Vector3[] v;
     Vector3[] vhat;
     /* Dual variables */
     Vector3[] p;
     Vector3[] q;
+    CorridorMapNode[] map;
 
-    CorridorMapNode[] map = new CorridorMapNode[] {
-    new CorridorMapNode( new Vector3 (65f, 0f, 44f), 31f ), new CorridorMapNode( new Vector3 (79f, 0f, 43f), 29.4279f ), new CorridorMapNode( new Vector3 (93f, 0f, 42f), 28.0713f ), new CorridorMapNode( new Vector3 (110f, 0f, 40f), 27f ),
-    new CorridorMapNode( new Vector3 (124f, 0f, 39f), 25.4951f ), new CorridorMapNode( new Vector3 (138f, 0f, 38f), 24.1868f ), new CorridorMapNode( new Vector3 (152f, 0f, 37f), 22.8035f ), new CorridorMapNode( new Vector3 (167f, 0f, 37f), 23.7697f),
-    new CorridorMapNode( new Vector3 (188f, 0f, 46f), 31.9061f ), new CorridorMapNode( new Vector3 (184f, 0f, 66f), 24.1868f ), new CorridorMapNode( new Vector3 (177f, 0f, 84f), 22.0227f ), new CorridorMapNode( new Vector3 (165f, 0f, 96f), 26.4764f ),
-    new CorridorMapNode( new Vector3 (147f, 0f, 109f), 36.1248f ), new CorridorMapNode( new Vector3 (125f, 0f, 134f), 56.8859f ), new CorridorMapNode( new Vector3 (101f, 0f, 170f), 88f ), new CorridorMapNode( new Vector3 (110f, 0f, 189f), 97f ),
-    new CorridorMapNode( new Vector3 (119f, 0f, 208f), 106f ), new CorridorMapNode( new Vector3 (131f, 0f, 229f), 117.618f ), new CorridorMapNode( new Vector3 (172f, 0f, 211f), 85.3815f ), new CorridorMapNode( new Vector3 (198f, 0f, 194f), 66.7308f ),
-    new CorridorMapNode( new Vector3 (214f, 0f, 179f), 56.8595f ), new CorridorMapNode( new Vector3 (228f, 0f, 161f), 50.2494f ), new CorridorMapNode( new Vector3 (237f, 0f, 149f), 50.9117f ), new CorridorMapNode( new Vector3 (249f, 0f, 136f), 54.5619f ),
-    new CorridorMapNode( new Vector3 (264f, 0f, 124f), 61.6604f ), new CorridorMapNode( new Vector3 (285f, 0f, 112f), 73.6817f ), new CorridorMapNode( new Vector3 (312f, 0f, 103f), 89.8109f ), new CorridorMapNode( new Vector3 (328f, 0f, 107f), 92.6607f ),
-    new CorridorMapNode( new Vector3 (345f, 0f, 112f), 98.0816f ), new CorridorMapNode( new Vector3 (363f, 0f, 118f), 105f ), new CorridorMapNode( new Vector3 (368f, 0f, 136f), 99.6444f ), new CorridorMapNode( new Vector3 (341f, 0f, 182f), 58.3095f ),
-    new CorridorMapNode( new Vector3 (316f, 0f, 205f), 36.3456f ), new CorridorMapNode( new Vector3 (301f, 0f, 221f), 28.1603f ), new CorridorMapNode( new Vector3 (295f, 0f, 234f), 26.9258f ), new CorridorMapNode( new Vector3 (291f, 0f, 253f), 29.7321f ),
-    new CorridorMapNode( new Vector3 (290f, 0f, 272f), 35.1141f ), new CorridorMapNode( new Vector3 (297f, 0f, 298f), 50f ), new CorridorMapNode( new Vector3 (326f, 0f, 284f), 30.1496f ), new CorridorMapNode( new Vector3 (349f, 0f, 268f), 15f ),
-    new CorridorMapNode( new Vector3 (382f, 0f, 279f), 25.0799f ), new CorridorMapNode( new Vector3 (408f, 0f, 301f), 47f ), new CorridorMapNode( new Vector3 (421f, 0f, 300f), 47f ) 
-    };
+    [Header("Corridor Map Nodes")]
+    public List<GameObject> nodeList = new List<GameObject>();
 
-    
-    const float Epsilon = 1.192092896e-07F;
     [Header("Path Smoothing Configuration")]
     [SerializeField]
     Vector3 startPosition = new Vector3(58f, 18.7f, 67f);
@@ -75,31 +62,34 @@ public class PathSmoothing : MonoBehaviour
 
 
     // Start is called before the first frame update
-    void Awake()
+    void Start()
     {
         agent = GetComponent<NavMeshAgent>();
+        LoadCorridorMap();
         InitAgentPosition();
-        InitConstraint();
-        InitWeight();
-        InitStepsize();
+        InitConstraints();
+        InitWeights();
+        InitStepsizeVariables();
+        InitPrimeDualVariables();
         CreateSmoothPath();
-        //MoveAgent();
     }
 
-   /* void InitCorridorMap()
+    private void Update() 
     {
-        for (int i = 0; i < map.Length; ++i)
-        {
-            nodeList.Add(Object.Instantiate(node, map[i].circleCenter, Quaternion.identity));
-            nodeList[i].GetComponent<Node>().SetNodeRadius(map[i].radius);
-        }
-    }*/
-
-    private void Update() {
         MoveAgent();
     }
 
-    void InitConstraint()
+    void LoadCorridorMap()
+    {
+        map = new CorridorMapNode[nodeList.Count];
+        for (int i = 0; i < nodeList.Count; ++i)
+        {
+            map[i].circleCenter = nodeList[i].transform.position;
+            map[i].radius = nodeList[i].GetComponent<Node>().radius;
+        }
+    }
+
+    void InitConstraints()
     {
         int numOfNewMapNodes = map.Length + 4;
         circleCenter = new Vector3[numOfNewMapNodes];
@@ -131,34 +121,18 @@ public class PathSmoothing : MonoBehaviour
         }
     }
 
-    void InitWeight()
+    void InitWeights()
     {
         float ws = startSmoothingWeight;
         float we = goalSmoothingWeight;
         float wm = smoothingWeight;
         weight = new float[map.Length + 4];
-        bool hasStartFacingDirection = true;
-        bool hasGoalFacingDirection = true;
-        if (startFacingDirection.x == 0 && startFacingDirection.z == 0)
-        {
-            hasStartFacingDirection = false;
-        }
 
-        if (goalFacingDirection.x == 0 && goalFacingDirection.z == 0)
-        {
-            hasGoalFacingDirection = false;
-        }
         weight[0] = 0;
         weight[weight.Length - 1] = 0;
-
-        if (!hasStartFacingDirection)
-        {
-            ws = smoothingWeight;
-        }
-        if (!hasGoalFacingDirection)
-        {
-            we = smoothingWeight;
-        }
+        ws = smoothingWeight;
+        we = smoothingWeight;
+        
         float bound = (float)(weight.Length - 2) / (2f * (float)(weight.Length - 3));
         for (int i = 1; i < weight.Length - 1; ++i)
         {
@@ -173,18 +147,9 @@ public class PathSmoothing : MonoBehaviour
                 weight[i] = wm + (we - wm) * weightCurve;
             }
         }
-
-        if (!hasStartFacingDirection)
-        {
-            weight[1] = 0;
-        }
-        if (!hasGoalFacingDirection)
-        {
-            weight[weight.Length - 2] = 0;
-        }
     }
 
-    void InitStepsize()
+    void InitStepsizeVariables()
     {
         sigma = new float[map.Length + 4];
         tau = new float[map.Length + 4];
@@ -216,7 +181,12 @@ public class PathSmoothing : MonoBehaviour
         mu = hPowAlpha / (2f * stepSizeBeta);
     }
 
-    void CreateSmoothPath()
+    Vector3 CalculateDifference(Vector3 pre, Vector3 next, float scale)
+    {
+        return (next - pre) / scale;
+    }
+
+    void InitPrimeDualVariables()
     {
         int pathLength = circleCenter.Length;
         v = new Vector3[pathLength];
@@ -231,15 +201,19 @@ public class PathSmoothing : MonoBehaviour
             p[i] = new Vector3(0f, 0f, 0f);
             q[i] = new Vector3(0f, 0f, 0f);
         }
+    }
 
+    void CreateSmoothPath()
+    {
+        int pathLength = circleCenter.Length;
         for (int index = 1; index <= numOfIterations; ++ index)
         {
             q[0] = mu * ((vhat[1] - vhat[0]) / h);
             float qL2Norm = q[0].sqrMagnitude;
             for (int i = 1; i < pathLength - 1; ++i)
             {
-                Vector3 forwardDifference = (vhat[i + 1] - vhat[i]) / h;
-                Vector3 backwardDifference = (vhat[i] - vhat[i - 1]) / h;
+                Vector3 forwardDifference = CalculateDifference(vhat[i], vhat[i + 1], h);
+                Vector3 backwardDifference = CalculateDifference(vhat[i - 1], vhat[i], h);
 
                 p[i] = (p[i] + sigma[i] * weight[i] * (-forwardDifference + backwardDifference)) / (1f + sigma[i]);
                 q[i] = q[i] + mu * forwardDifference;
@@ -256,7 +230,7 @@ public class PathSmoothing : MonoBehaviour
 
             for (int i = 1; i < pathLength - 1; ++i)
             {
-                Vector3 qBackwardDifferencing = (q[i] - q[i - 1]) / h;
+                Vector3 qBackwardDifferencing = CalculateDifference(q[i - 1], q[i], h);
                 Vector3 pSumDifferencing = (2 * weight[i] * p[i] - weight[i - 1] * p[i - 1] - weight[i + 1] * p[i + 1]) / h;
 
                 Vector3 nextv = v[i] - tau[i] * (pSumDifferencing - qBackwardDifferencing);
@@ -272,8 +246,8 @@ public class PathSmoothing : MonoBehaviour
     {
         startPosition = new Vector3(startPosition.x, gameObject.transform.position.y, startPosition.z);
         this.gameObject.transform.position = startPosition;
-        Quaternion endRotation = Quaternion.LookRotation(startFacingDirection, Vector3.up);
-        transform.rotation = endRotation;
+        Quaternion startRotation = Quaternion.LookRotation(startFacingDirection, Vector3.up);
+        transform.rotation = startRotation;
     }
 
     void MoveAgent()
@@ -295,7 +269,6 @@ public class PathSmoothing : MonoBehaviour
         }
 
         movementVector = (v[nodeIndex] - transform.position);
-        Debug.Log(movementVector);
         targetDirection = Vector3.Lerp(
             targetDirection,
             movementVector,

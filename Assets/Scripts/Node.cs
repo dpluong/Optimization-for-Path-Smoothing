@@ -3,8 +3,8 @@ using UnityEditor;
 
 public class Node : MonoBehaviour
 {
-    [SerializeField]
-    float radius;
+
+    public float radius;
     
     private void OnDrawGizmos() 
     {
